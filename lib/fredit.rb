@@ -5,6 +5,8 @@ else
   require 'fredit/template31'
 end
 require 'uri'
+require 'fredit/backend'
+require 'fredit/standard_backend'
 
 module Fredit
   extend self

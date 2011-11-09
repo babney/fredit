@@ -20,11 +20,6 @@ class FreditController < ::ApplicationController
   def update
     @path = secure_path params[:file_path]
 
-    edit_msg = !params[:edit_message].blank? ? params[:edit_message] : "unspecified edit"
-    edit_msg_file = Tempfile.new('commit-message')
-    edit_msg_file.write(edit_msg) # we write this message to a file to protect against shell injection
-    edit_msg_file.close
-
     session[:commit_author] = (params[:commit_author] || '')
     # cleanup any shell injection attempt characters
     author = session[:commit_author].gsub(/[^\w@<>. ]/, '') 
@@ -38,16 +33,13 @@ class FreditController < ::ApplicationController
     end
 
     if params[:commit] =~ /delete/i
-      `git rm #@path`
-      flash[:notice] = "#@path deleted"
-      res = system %Q|git commit --author='#{author}' --file #{edit_msg_file.path} #{@path}|
+      res = Fredit::StandardBackend.delete(@path, author)
+      flash[:notice] = "#{path} deleted"
       @path = nil
     else
-      n = params[:source].gsub(/\r\n/, "\n")
-      File.open(@path, 'w') {|f| f.write(n)}
-      system %Q|git add #{@path}|
+      content = params[:source].gsub(/\r\n/, "\n")
+      res = Fredit::StandardBackend.update(@path, content, params[:edit_message], author)
       flash[:notice] = "#@path updated"
-      res = system %Q|git commit --author='#{author}' --file #{edit_msg_file.path} #{@path}|
     end
     if res == false
       flash[:notice] = "Something went wrong with git. Make sure you changed something and filled in required fields."
@@ -57,36 +49,27 @@ class FreditController < ::ApplicationController
   
   def create
     @path = secure_path params[:new_file]
-    FileUtils::mkdir_p File.dirname(@path)
-    File.open(@path, 'w') {|f| f.write("REPLACE WITH CONTENT")}
+    Fredit::StandardBackend.create(@path)
     flash[:notice] = "Created new file: #@path"
     redirect_to fredit_path(:file => @path)
   end
 
   def upload
     @path = secure_path params[:file_path]
-    upload = params[:upload_file]  
+    upload = params[:upload_file]
     if !upload.respond_to?(:original_filename)
       flash[:notice] = "You need to choose a file to upload"
       redirect_to fredit_path(file: @path)
       return
     end
-    filename = upload.original_filename
-    upload_dir = secure_path( params[:target_dir] || 'public/images' )
-    FileUtils::mkdir_p upload_dir
-    upload_path = File.join(upload_dir, filename)
-    File.open(upload_path, 'wb') {|f| f.write(upload.read)}
-    flash[:notice] = "File successfully uploaded to #{upload_path}"
-    system %Q|git add #{upload_path}|
     author = session[:commit_author] = (params[:commit_author] || '').gsub(/[^\w@<>. ]/, '') 
     if author.blank?
       flash[:notice] = "Uploaded By must not be blank"
       redirect_to :back
       return
     end
-    cmd = %Q|git commit --author='#{author}' -m 'added #{filename}' #{upload_path}|
-    logger.debug cmd
-    res = system cmd
+    res = Fredit::StandardBackend.upload(upload, author)
+
     redirect_to fredit_path(@path)
   end
 
